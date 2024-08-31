@@ -1,13 +1,15 @@
-from .CheckBaseException import CheckBaseException
-from .ClientResponseErrorParamsException import ClientResponseErrorParamsException
-from .DatabaseException import DatabaseException
-from .OrioksParseDataException import OrioksParseDataException
-from .FileCompareException import FileCompareException
+from .CheckBaseError import CheckBaseError
+from .ClientResponseErrorParamsError import ClientResponseErrorParamsError
+from .DatabaseError import DatabaseError
+from .FileCompareError import FileCompareError
+from .OrioksParseDataError import OrioksParseDataError
+from .UserCookiesNotFoundError import UserCookiesNotFoundError
 
 __all__ = [
-    'CheckBaseException',
-    'ClientResponseErrorParamsException',
-    'DatabaseException',
-    'OrioksParseDataException',
-    'FileCompareException',
+    "CheckBaseError",
+    "ClientResponseErrorParamsError",
+    "DatabaseError",
+    "OrioksParseDataError",
+    "FileCompareError",
+    "UserCookiesNotFoundError",
 ]

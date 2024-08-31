@@ -1,7 +1,15 @@
 import asyncio
+from types import TracebackType
 
 from aio_pika import connect_robust
+from aio_pika.exceptions import DeliveryError
 from aio_pika.patterns import RPC
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 from app.config import RABBIT_MQ_URL
 
@@ -14,7 +22,7 @@ class RPCQueueClient:
         async with RPCQueueClient() as rpc:
             result = await rpc.call("make_orioks_request", kwargs=dict(
                 task_info=OrioksRequestMessage(
-                    user_telegram_id=1522960798,
+                    user_telegram_id=0123456789,
                     event_type="marks",
                 )
             ))
@@ -40,11 +48,29 @@ class RPCQueueClient:
 
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
-        await self.connection.__aexit__(exc_type, exc, tb)
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ):
+        assert self.connection
+
+        await self.connection.__aexit__(exc_type, exc_val, exc_tb)
 
     async def call(self, method_name: str, kwargs: dict):
-        result = await asyncio.wait_for(
-            self.rpc.call(method_name, kwargs=kwargs), timeout=self.timeout
-        )
-        return result
+        assert self.connection
+        assert self.channel
+        assert self.rpc
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(5),
+            wait=wait_fixed(2),
+            retry=retry_if_exception_type((asyncio.TimeoutError, DeliveryError)),
+            reraise=True,
+        ):
+            with attempt:
+                return await asyncio.wait_for(
+                    self.rpc.call(method_name, kwargs=kwargs),
+                    timeout=self.timeout,
+                )

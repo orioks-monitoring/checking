@@ -1,7 +1,7 @@
 from aiohttp import ClientResponseError
 
 
-class ClientResponseErrorParamsException(ClientResponseError):
+class ClientResponseErrorParamsError(ClientResponseError):
     def __init__(
         self,
         *args,

@@ -1,4 +1,5 @@
 from enum import IntEnum, unique
+from time import time
 
 import aio_pika
 from aio_pika import DeliveryMode, Message
@@ -29,6 +30,7 @@ class Producer:
                 message_body,
                 delivery_mode=DeliveryMode.PERSISTENT,
                 priority=priority,
+                timestamp=time(),
             )
             await channel.default_exchange.publish(message, routing_key=queue_name)
 

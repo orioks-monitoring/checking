@@ -1,49 +1,43 @@
-import asyncio
 import logging
 import random
-from asyncio import sleep
-from typing import NoReturn, Coroutine
+from asyncio import TimeoutError, sleep
+from typing import Coroutine, NoReturn, Sequence
 
-import msgpack
+from prometheus_client import start_http_server
 
 from app.exceptions import (
-    OrioksParseDataException,
-    CheckBaseException,
-    ClientResponseErrorParamsException,
+    CheckBaseError,
+    ClientResponseErrorParamsError,
+    OrioksParseDataError,
 )
 from app.helpers import (
-    CommonHelper,
-    UserHelper,
-    MongoHelper,
-    MongoContextManager,
     MessageToAdminsHelper,
-)
-from app.helpers.ClientResponseErrorParamsExceptionHelper import (
-    ClientResponseErrorParamsExceptionHelper,
-)
-
-from app.models.users import UserStatus, UserNotifySettings
-from app.marks.get_orioks_marks import user_marks_check
-from app.news.get_orioks_news import (
-    user_news_check_from_news_id,
-    get_current_new_info,
+    MongoContextManager,
+    UserHelper,
 )
 from app.homeworks.get_orioks_homeworks import user_homeworks_check
-from app.queue.Producer import Producer, Priority
+from app.logging import setup_logging
+from app.marks.get_orioks_marks import user_marks_check
+from app.models.users import UserNotifySettings, UserStatus
+from app.news.get_orioks_news import (
+    get_current_new_info,
+    user_news_check_from_news_id,
+)
 from app.requests.get_orioks_requests import user_requests_check
-from message_models.models import ToAdminsMessage
+
+logger = logging.getLogger(__name__)
 
 
 async def _delete_users_tracking_data_in_notify_settings_off(
     user_telegram_id: int, user_notify_settings: UserNotifySettings
 ) -> None:
-    tracking_data_collections = ('marks', 'news', 'homeworks', 'requests')
+    tracking_data_collections = ("marks", "news", "homeworks", "requests")
     for collection_name in tracking_data_collections:
         if not getattr(user_notify_settings, collection_name):
             async with MongoContextManager(
-                database='tracking_data', collection=collection_name
+                database="tracking_data", collection=collection_name
             ) as mongo:
-                await mongo.delete_one({'id': user_telegram_id})
+                await mongo.delete_one({"id": user_telegram_id})
 
 
 async def make_one_user_check(user_telegram_id: int) -> None:
@@ -57,8 +51,10 @@ async def make_one_user_check(user_telegram_id: int) -> None:
             await user_homeworks_check(user_telegram_id=user_telegram_id)
         if user_notify_settings.requests:
             await user_requests_check(user_telegram_id=user_telegram_id)
-    except CheckBaseException:
+    except CheckBaseError:
         await UserHelper.increment_failed_request_count(user_telegram_id)
+    except TimeoutError:
+        logging.error("RPC: Сервер ОРИОКС не отвечает")
     else:
         UserHelper.reset_failed_request_count(user_telegram_id)
     #
@@ -71,7 +67,7 @@ async def make_one_user_check(user_telegram_id: int) -> None:
 
 async def make_all_users_news_check(
     tries_counter: int = 0,
-) -> list[asyncio.Task | Coroutine]:
+) -> list[Coroutine]:
     tasks = []
     users_to_check_news = UserHelper.get_users_with_enabled_news_subscription()
     users_to_check_news = [user.user_telegram_id for user in users_to_check_news]
@@ -84,9 +80,10 @@ async def make_all_users_news_check(
         current_news = await get_current_new_info(
             user_telegram_id=picked_user_to_check_news
         )
-    except OrioksParseDataException:
+    except OrioksParseDataError:
         await UserHelper.increment_failed_request_count(picked_user_to_check_news)
         return await make_all_users_news_check(tries_counter=tries_counter + 1)
+
     for user_telegram_id in users_to_check_news:
         tasks.append(
             user_news_check_from_news_id(
@@ -97,38 +94,45 @@ async def make_all_users_news_check(
     return tasks
 
 
-async def run_requests(tasks: list[asyncio.Task | Coroutine]) -> None:
+async def run_requests(tasks: Sequence[Coroutine]) -> None:
+    logging.info("Начало обработки %s запросов", len(tasks))
     try:
-        await asyncio.gather(*tasks, return_exceptions=False)
-    except asyncio.TimeoutError:
-        logging.error('Сервер ОРИОКС не отвечает')
-    except ClientResponseErrorParamsException as exception:
+        for task in tasks:
+            await task
+    # except asyncio.TimeoutError:
+    #     logging.error("Сервер ОРИОКС не отвечает")
+    # except FileNotFoundError:
+    # logging.error()
+    except ClientResponseErrorParamsError as exception:
         if exception.status == 504:
             logging.error(
-                'Вероятно, на сервере ОРИОКС проводятся технические работы: %s',
+                "Вероятно, на сервере ОРИОКС проводятся технические работы: %s",
                 exception,
             )
         else:
-            logging.exception(
-                'Ошибка в запросах ОРИОКС!\n %s', exception, exc_info=True
+            logging.exception("Ошибка в запросах ОРИОКС!\n %s", exception)
+            await MessageToAdminsHelper.send(
+                f"Ошибка в запросах ОРИОКС!\n{exception}, {exception.raw_html}"
             )
-            await ClientResponseErrorParamsExceptionHelper.check(exception)
 
     except Exception as exception:
-        logging.exception('Ошибка в запросах ОРИОКС!\n %s', exception, exc_info=True)
-        await MessageToAdminsHelper.send(f'Ошибка в запросах ОРИОКС!\n{exception}')
+        logging.exception("Ошибка в запросах ОРИОКС!\n %s", exception)
+        await MessageToAdminsHelper.send(
+            f"Ошибка в запросах ОРИОКС!\n{repr(exception)}"
+        )
 
 
 async def do_checks():
-    logging.info('app started')
+    logging.info("checks loop started")
 
     authenticated_users = UserStatus.query.filter_by(authenticated=True)
     users_telegram_ids = set(user.user_telegram_id for user in authenticated_users)
-    tasks: list[asyncio.Task | Coroutine] = await make_all_users_news_check()
+    tasks: list[Coroutine] = await make_all_users_news_check()
     for user_telegram_id in users_telegram_ids:
         tasks.append(make_one_user_check(user_telegram_id=user_telegram_id))
-    await run_requests(tasks=tasks)
-    logging.info('app ended')
+
+    await run_requests(tasks)
+    logging.info("checks loop ended")
 
 
 async def endless_loop() -> NoReturn:
@@ -138,8 +142,13 @@ async def endless_loop() -> NoReturn:
 
 
 async def on_startup() -> NoReturn:
-    await MessageToAdminsHelper.send('Checking запущен')
+    setup_logging()
+    logger.info("Starting metrics server...")
+    start_http_server(port=8880)
+    logger.info("Metrics server started.")
+
+    await MessageToAdminsHelper.send("Checking запущен")
     try:
         await endless_loop()
     finally:
-        await MessageToAdminsHelper.send('Checking остановлен')
+        await MessageToAdminsHelper.send("Checking остановлен")

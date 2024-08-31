@@ -1,8 +1,8 @@
-from typing import Dict
+from typing import Any
 
 from app.models import session
 from app.models.admins import AdminStatistics
-from app.models.users import UserStatus, UserNotifySettings
+from app.models.users import UserNotifySettings, UserStatus
 
 
 class AdminHelper:
@@ -34,7 +34,7 @@ class AdminHelper:
         return users_with_accepted_agreement.count()
 
     @staticmethod
-    def get_count_users_statistics() -> Dict:
+    def get_count_users_statistics() -> dict[str, str]:
         users_agreement_accepted = AdminHelper.get_user_status_statistics(
             agreement_accepted=True
         )
@@ -52,21 +52,21 @@ class AdminHelper:
         all_users = users_agreement_discarded + users_agreement_accepted
         all_orioks_users = users_orioks_no_authentication + users_orioks_authentication
         return {
-            'Приняли пользовательское соглашение': f'{users_agreement_accepted} / {all_users}',
-            'Выполнили вход в ОРИОКС': f'{users_orioks_authentication} / {all_orioks_users}',
+            "Приняли пользовательское соглашение": f"{users_agreement_accepted} / {all_users}",
+            "Выполнили вход в ОРИОКС": f"{users_orioks_authentication} / {all_orioks_users}",
         }
 
     @staticmethod
     def get_count_notify_settings_by_row_name(row_name: str) -> int:
         if row_name not in (
-            'marks',
-            'news',
-            'homeworks',
-            'requests',
+            "marks",
+            "news",
+            "homeworks",
+            "requests",
         ):
             raise Exception(
-                'select_count_notify_settings_row_name() -> row_name must only be in ('
-                'marks, news, homeworks, requests)'
+                "select_count_notify_settings_row_name() -> row_name must only be in ("
+                "marks, news, homeworks, requests)"
             )
 
         users_count = (
@@ -85,10 +85,10 @@ class AdminHelper:
         return int(users_count)
 
     @staticmethod
-    def get_general_statistics():
+    def get_general_statistics() -> dict[str, Any]:
         statistics_object = AdminHelper.get_statistics_object()
-        successful_login_percent = f'{statistics_object.success_logins} / {statistics_object.success_logins + statistics_object.failed_logins}'
+        successful_login_percent = f"{statistics_object.success_logins} / {statistics_object.success_logins + statistics_object.failed_logins}"
         return {
-            'Запланированные успешные запросы на сервера ОРИОКС': statistics_object.scheduled_requests,
-            'Успешные попытки авторизации ОРИОКС': successful_login_percent,
+            "Запланированные успешные запросы на сервера ОРИОКС": statistics_object.scheduled_requests,
+            "Успешные попытки авторизации ОРИОКС": successful_login_percent,
         }
